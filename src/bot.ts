@@ -1,6 +1,7 @@
 import { Telegraf, Markup } from 'telegraf';
 import { createClient } from '@supabase/supabase-js';
 import * as dotenv from 'dotenv';
+import { Database } from './interfaces/db_sheme';
 
 dotenv.config();
 
@@ -14,7 +15,7 @@ if (!supabaseUrl || !supabaseKey) {
     throw new Error('Missing Supabase credentials in environment variables');
 }
 
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabase = createClient<Database>(supabaseUrl, supabaseKey);
 
 // Keyboard markup for main menu
 const mainMenuKeyboard = Markup.keyboard([
