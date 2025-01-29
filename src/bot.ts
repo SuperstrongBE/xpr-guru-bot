@@ -1,7 +1,8 @@
-import { Telegraf, Markup } from 'telegraf';
+import { Telegraf, Markup, Context } from 'telegraf';
 import { createClient } from '@supabase/supabase-js';
 import * as dotenv from 'dotenv';
 import { Database } from './interfaces/db_sheme';
+import { Session } from './interfaces/session';
 
 dotenv.config();
 
@@ -16,6 +17,70 @@ if (!supabaseUrl || !supabaseKey) {
 }
 
 const supabase = createClient<Database>(supabaseUrl, supabaseKey);
+
+// Helper function to create or get active session
+async function getOrCreateSession(ctx: Context): Promise<Session | null> {
+    if (!ctx.from) {
+        return null;
+    }
+
+    // Check for existing active session
+    const { data: existingSession } = await supabase
+        .from('sessions')
+        .select('*')
+        .eq('user_id', ctx.from.id)
+        .eq('status', 'active')
+        .single();
+
+    if (existingSession) {
+        return existingSession;
+    }
+
+    // Create new session
+    const newSession = {
+        user_id: ctx.from.id,
+        telegram_username: ctx.from.username || 'unknown',
+        current_step: 1,
+        status: 'active',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+    };
+
+    const { data: session, error } = await supabase
+        .from('sessions')
+        .insert([newSession])
+        .select()
+        .single();
+
+    if (error) {
+        console.error('Error creating session:', error);
+        return null;
+    }
+
+    return session;
+}
+
+// Helper function to update session step
+async function updateSessionStep(sessionId: string, step: number): Promise<void> {
+    await supabase
+        .from('sessions')
+        .update({ 
+            current_step: step,
+            updated_at: new Date().toISOString()
+        })
+        .eq('id', sessionId);
+}
+
+// Helper function to complete session
+async function completeSession(sessionId: string): Promise<void> {
+    await supabase
+        .from('sessions')
+        .update({ 
+            status: 'completed',
+            updated_at: new Date().toISOString()
+        })
+        .eq('id', sessionId);
+}
 
 // Keyboard markup for main menu
 const mainMenuKeyboard = Markup.keyboard([
@@ -34,16 +99,31 @@ const createInlineKeyboard = () => {
 
 // Start command
 bot.command('start', async (ctx) => {
+    const session = await getOrCreateSession(ctx);
+    if (!session) {
+        await ctx.reply('Sorry, there was an error creating your session. Please try again.');
+        return;
+    }
+
     await ctx.reply(
-        'Welcome to XPR Guru Bot! 🚀\nUse the buttons below to navigate:',
+        `Welcome to XPR Guru Bot! 🚀\nSession started (ID: ${session.id})\nUse the buttons below to navigate:`,
         mainMenuKeyboard
     );
 });
 
 // Next command
 bot.command('next', async (ctx) => {
+    const session = await getOrCreateSession(ctx);
+    if (!session) {
+        await ctx.reply('Please start a new session with /start command first.');
+        return;
+    }
+
+    const nextStep = session.current_step + 1;
+    await updateSessionStep(session.id, nextStep);
+
     await ctx.reply(
-        'Moving to the next step! 🔄',
+        `Moving to step ${nextStep}! 🔄`,
         Markup.inlineKeyboard([
             [
                 Markup.button.callback('⏭️ Next', 'next_command'),
@@ -55,8 +135,16 @@ bot.command('next', async (ctx) => {
 
 // Finish command
 bot.command('finish', async (ctx) => {
+    const session = await getOrCreateSession(ctx);
+    if (!session) {
+        await ctx.reply('No active session found. Please start a new session with /start command.');
+        return;
+    }
+
+    await completeSession(session.id);
+
     await ctx.reply(
-        'Thank you for using XPR Guru Bot! 🎉',
+        `Session ${session.id} completed! 🎉\nYou completed ${session.current_step} steps.`,
         Markup.inlineKeyboard([
             [Markup.button.callback('🔄 Start Again', 'start_command')]
         ])
@@ -65,15 +153,30 @@ bot.command('finish', async (ctx) => {
 
 // Handle keyboard button clicks
 bot.hears('🚀 Start', async (ctx) => {
+    const session = await getOrCreateSession(ctx);
+    if (!session) {
+        await ctx.reply('Sorry, there was an error creating your session. Please try again.');
+        return;
+    }
+
     await ctx.reply(
-        'Welcome to XPR Guru Bot! 🚀\nUse the buttons below to navigate:',
+        `Welcome to XPR Guru Bot! 🚀\nSession started (ID: ${session.id})\nUse the buttons below to navigate:`,
         createInlineKeyboard()
     );
 });
 
 bot.hears('⏭️ Next', async (ctx) => {
+    const session = await getOrCreateSession(ctx);
+    if (!session) {
+        await ctx.reply('Please start a new session first.');
+        return;
+    }
+
+    const nextStep = session.current_step + 1;
+    await updateSessionStep(session.id, nextStep);
+
     await ctx.reply(
-        'Moving to the next step! 🔄',
+        `Moving to step ${nextStep}! 🔄`,
         Markup.inlineKeyboard([
             [
                 Markup.button.callback('⏭️ Next', 'next_command'),
@@ -84,8 +187,16 @@ bot.hears('⏭️ Next', async (ctx) => {
 });
 
 bot.hears('🏁 Finish', async (ctx) => {
+    const session = await getOrCreateSession(ctx);
+    if (!session) {
+        await ctx.reply('No active session found. Please start a new session first.');
+        return;
+    }
+
+    await completeSession(session.id);
+
     await ctx.reply(
-        'Thank you for using XPR Guru Bot! 🎉',
+        `Session ${session.id} completed! 🎉\nYou completed ${session.current_step} steps.`,
         Markup.inlineKeyboard([
             [Markup.button.callback('🔄 Start Again', 'start_command')]
         ])
@@ -95,16 +206,31 @@ bot.hears('🏁 Finish', async (ctx) => {
 // Handle inline button callbacks
 bot.action('start_command', async (ctx) => {
     await ctx.answerCbQuery();
+    const session = await getOrCreateSession(ctx);
+    if (!session) {
+        await ctx.reply('Sorry, there was an error creating your session. Please try again.');
+        return;
+    }
+
     await ctx.reply(
-        'Welcome back to XPR Guru Bot! 🚀\nUse the buttons below to navigate:',
+        `Welcome back to XPR Guru Bot! 🚀\nSession started (ID: ${session.id})\nUse the buttons below to navigate:`,
         createInlineKeyboard()
     );
 });
 
 bot.action('next_command', async (ctx) => {
     await ctx.answerCbQuery();
+    const session = await getOrCreateSession(ctx);
+    if (!session) {
+        await ctx.reply('Please start a new session first.');
+        return;
+    }
+
+    const nextStep = session.current_step + 1;
+    await updateSessionStep(session.id, nextStep);
+
     await ctx.reply(
-        'Moving to the next step! 🔄',
+        `Moving to step ${nextStep}! 🔄`,
         Markup.inlineKeyboard([
             [
                 Markup.button.callback('⏭️ Next', 'next_command'),
@@ -116,8 +242,16 @@ bot.action('next_command', async (ctx) => {
 
 bot.action('finish_command', async (ctx) => {
     await ctx.answerCbQuery();
+    const session = await getOrCreateSession(ctx);
+    if (!session) {
+        await ctx.reply('No active session found. Please start a new session first.');
+        return;
+    }
+
+    await completeSession(session.id);
+
     await ctx.reply(
-        'Thank you for using XPR Guru Bot! 🎉',
+        `Session ${session.id} completed! 🎉\nYou completed ${session.current_step} steps.`,
         Markup.inlineKeyboard([
             [Markup.button.callback('🔄 Start Again', 'start_command')]
         ])
