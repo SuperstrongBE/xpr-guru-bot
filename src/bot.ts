@@ -28,22 +28,44 @@ async function getOrCreateSession(ctx: Context): Promise<Session | null> {
     const { data: existingSession } = await supabase
         .from('sessions')
         .select('*')
-        .eq('user_id', ctx.from.id)
-        .eq('status', 'active')
+        .eq('tg_handle', ctx.from.username || 'unknown')
+        .order('created_date', { ascending: false })
+        .limit(1)
         .single();
+
+    if (existingSession && existingSession.questions !== null) {
+        // Create new session if the last one has questions (was used)
+        const newSession = {
+            tg_handle: ctx.from.username || 'unknown',
+            created_date: new Date().toISOString(),
+            questions: 0,
+            correct: 0
+        };
+
+        const { data: session, error } = await supabase
+            .from('sessions')
+            .insert([newSession])
+            .select()
+            .single();
+
+        if (error) {
+            console.error('Error creating session:', error);
+            return null;
+        }
+
+        return session;
+    }
 
     if (existingSession) {
         return existingSession;
     }
 
-    // Create new session
+    // Create new session if none exists
     const newSession = {
-        user_id: ctx.from.id,
-        telegram_username: ctx.from.username || 'unknown',
-        current_step: 1,
-        status: 'active',
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        tg_handle: ctx.from.username || 'unknown',
+        created_date: new Date().toISOString(),
+        questions: 0,
+        correct: 0
     };
 
     const { data: session, error } = await supabase
@@ -60,26 +82,16 @@ async function getOrCreateSession(ctx: Context): Promise<Session | null> {
     return session;
 }
 
-// Helper function to update session step
-async function updateSessionStep(sessionId: string, step: number): Promise<void> {
+// Helper function to update session progress
+async function updateSessionProgress(sessionId: string, questions: number, correct: number): Promise<void> {
     await supabase
         .from('sessions')
         .update({ 
-            current_step: step,
-            updated_at: new Date().toISOString()
+            questions,
+            correct
         })
         .eq('id', sessionId);
 }
-
-// Helper function to complete session
-async function completeSession(sessionId: string): Promise<void> {
-    await supabase
-        .from('sessions')
-        .update({ 
-            status: 'completed',
-            updated_at: new Date().toISOString()
-        })
-        .eq('id', sessionId);
 }
 
 // Keyboard markup for main menu
@@ -106,7 +118,7 @@ bot.command('start', async (ctx) => {
     }
 
     await ctx.reply(
-        `Welcome to XPR Guru Bot! 🚀\nSession started (ID: ${session.id})\nUse the buttons below to navigate:`,
+        `Welcome to XPR Guru Bot! 🚀\nNew session started (ID: ${session.id})\nUse the buttons below to navigate:`,
         mainMenuKeyboard
     );
 });
@@ -119,11 +131,12 @@ bot.command('next', async (ctx) => {
         return;
     }
 
-    const nextStep = session.current_step + 1;
-    await updateSessionStep(session.id, nextStep);
+    const currentQuestions = session.questions || 0;
+    const currentCorrect = session.correct || 0;
+    await updateSessionProgress(session.id, currentQuestions + 1, currentCorrect);
 
     await ctx.reply(
-        `Moving to step ${nextStep}! 🔄`,
+        `Question ${(currentQuestions + 1)}! 🔄\nCorrect answers: ${currentCorrect}`,
         Markup.inlineKeyboard([
             [
                 Markup.button.callback('⏭️ Next', 'next_command'),
@@ -141,10 +154,12 @@ bot.command('finish', async (ctx) => {
         return;
     }
 
-    await completeSession(session.id);
+    const questions = session.questions || 0;
+    const correct = session.correct || 0;
+    const accuracy = questions > 0 ? Math.round((correct / questions) * 100) : 0;
 
     await ctx.reply(
-        `Session ${session.id} completed! 🎉\nYou completed ${session.current_step} steps.`,
+        `Session completed! 🎉\nQuestions answered: ${questions}\nCorrect answers: ${correct}\nAccuracy: ${accuracy}%`,
         Markup.inlineKeyboard([
             [Markup.button.callback('🔄 Start Again', 'start_command')]
         ])
@@ -160,7 +175,7 @@ bot.hears('🚀 Start', async (ctx) => {
     }
 
     await ctx.reply(
-        `Welcome to XPR Guru Bot! 🚀\nSession started (ID: ${session.id})\nUse the buttons below to navigate:`,
+        `Welcome to XPR Guru Bot! 🚀\nNew session started (ID: ${session.id})\nUse the buttons below to navigate:`,
         createInlineKeyboard()
     );
 });
@@ -172,11 +187,12 @@ bot.hears('⏭️ Next', async (ctx) => {
         return;
     }
 
-    const nextStep = session.current_step + 1;
-    await updateSessionStep(session.id, nextStep);
+    const currentQuestions = session.questions || 0;
+    const currentCorrect = session.correct || 0;
+    await updateSessionProgress(session.id, currentQuestions + 1, currentCorrect);
 
     await ctx.reply(
-        `Moving to step ${nextStep}! 🔄`,
+        `Question ${(currentQuestions + 1)}! 🔄\nCorrect answers: ${currentCorrect}`,
         Markup.inlineKeyboard([
             [
                 Markup.button.callback('⏭️ Next', 'next_command'),
@@ -193,10 +209,12 @@ bot.hears('🏁 Finish', async (ctx) => {
         return;
     }
 
-    await completeSession(session.id);
+    const questions = session.questions || 0;
+    const correct = session.correct || 0;
+    const accuracy = questions > 0 ? Math.round((correct / questions) * 100) : 0;
 
     await ctx.reply(
-        `Session ${session.id} completed! 🎉\nYou completed ${session.current_step} steps.`,
+        `Session completed! 🎉\nQuestions answered: ${questions}\nCorrect answers: ${correct}\nAccuracy: ${accuracy}%`,
         Markup.inlineKeyboard([
             [Markup.button.callback('🔄 Start Again', 'start_command')]
         ])
@@ -213,7 +231,7 @@ bot.action('start_command', async (ctx) => {
     }
 
     await ctx.reply(
-        `Welcome back to XPR Guru Bot! 🚀\nSession started (ID: ${session.id})\nUse the buttons below to navigate:`,
+        `Welcome back to XPR Guru Bot! 🚀\nNew session started (ID: ${session.id})\nUse the buttons below to navigate:`,
         createInlineKeyboard()
     );
 });
@@ -226,11 +244,12 @@ bot.action('next_command', async (ctx) => {
         return;
     }
 
-    const nextStep = session.current_step + 1;
-    await updateSessionStep(session.id, nextStep);
+    const currentQuestions = session.questions || 0;
+    const currentCorrect = session.correct || 0;
+    await updateSessionProgress(session.id, currentQuestions + 1, currentCorrect);
 
     await ctx.reply(
-        `Moving to step ${nextStep}! 🔄`,
+        `Question ${(currentQuestions + 1)}! 🔄\nCorrect answers: ${currentCorrect}`,
         Markup.inlineKeyboard([
             [
                 Markup.button.callback('⏭️ Next', 'next_command'),
@@ -248,10 +267,12 @@ bot.action('finish_command', async (ctx) => {
         return;
     }
 
-    await completeSession(session.id);
+    const questions = session.questions || 0;
+    const correct = session.correct || 0;
+    const accuracy = questions > 0 ? Math.round((correct / questions) * 100) : 0;
 
     await ctx.reply(
-        `Session ${session.id} completed! 🎉\nYou completed ${session.current_step} steps.`,
+        `Session completed! 🎉\nQuestions answered: ${questions}\nCorrect answers: ${correct}\nAccuracy: ${accuracy}%`,
         Markup.inlineKeyboard([
             [Markup.button.callback('🔄 Start Again', 'start_command')]
         ])
