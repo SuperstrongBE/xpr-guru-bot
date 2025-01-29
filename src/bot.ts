@@ -33,7 +33,10 @@ bot.command('next', async (ctx) => {
     await ctx.reply(
         'Moving to the next step! 🔄',
         Markup.inlineKeyboard([
-            [Markup.button.callback('🏁 Finish', 'finish_command')]
+            [
+                Markup.button.callback('⏭️ Next', 'next_command'),
+                Markup.button.callback('🏁 Finish', 'finish_command')
+            ]
         ])
     );
 });
@@ -60,7 +63,10 @@ bot.hears('⏭️ Next', async (ctx) => {
     await ctx.reply(
         'Moving to the next step! 🔄',
         Markup.inlineKeyboard([
-            [Markup.button.callback('🏁 Finish', 'finish_command')]
+            [
+                Markup.button.callback('⏭️ Next', 'next_command'),
+                Markup.button.callback('🏁 Finish', 'finish_command')
+            ]
         ])
     );
 });
@@ -88,7 +94,10 @@ bot.action('next_command', async (ctx) => {
     await ctx.reply(
         'Moving to the next step! 🔄',
         Markup.inlineKeyboard([
-            [Markup.button.callback('🏁 Finish', 'finish_command')]
+            [
+                Markup.button.callback('⏭️ Next', 'next_command'),
+                Markup.button.callback('🏁 Finish', 'finish_command')
+            ]
         ])
     );
 });
