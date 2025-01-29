@@ -34,3 +34,8 @@ ENV/
 # OS
 .DS_Store
 Thumbs.db
+
+# Project specific
+dist/
+.env
+node_modules/
