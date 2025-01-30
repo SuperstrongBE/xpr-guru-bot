@@ -232,16 +232,30 @@ bot.action(/^answer:(.+)$/, async (ctx) => {
         return;
     }
 
-    // Send feedback message
+    // Send immediate feedback in the popup
     await ctx.answerCbQuery(isCorrect ? '✅ Correct!' : '❌ Wrong!');
     
-    const feedbackMessage = isCorrect 
-        ? `✅ Correct!\n${question.answer_info ? `\nℹ️ ${question.answer_info}` : ''}`
-        : `❌ Wrong! The correct answer is: ${question.answer}\n${question.answer_info ? `\nℹ️ ${question.answer_info}` : ''}`;
+    // Prepare detailed feedback message
+    let feedbackMessage = isCorrect ? '✅ Correct!' : '❌ Wrong!';
     
-    const stats = `\n\nScore: ${updatedSession.correct}/${updatedSession.questions} correct`;
+    // Add the question for context
+    feedbackMessage += `\n\n📝 Question: ${question.question}`;
     
-    // Get next question ready before clearing current one
+    // Add user's answer
+    feedbackMessage += `\n🤔 Your answer: ${userAnswer}`;
+    
+    // Always show the correct answer
+    feedbackMessage += `\n✨ Correct answer: ${question.answer}`;
+    
+    // Add explanation if available
+    if (question.answer_info) {
+        feedbackMessage += `\n\nℹ️ Explanation: ${question.answer_info}`;
+    }
+    
+    // Add current score
+    const stats = `\n\n📊 Score: ${updatedSession.correct}/${updatedSession.questions} correct`;
+    
+    // Get next question ready
     const nextQuestion = await getRandomQuestion();
     if (nextQuestion && nextQuestion.choices) {
         activeQuestions.set(session.id, nextQuestion);
