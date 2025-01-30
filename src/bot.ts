@@ -1,18 +1,26 @@
-import { Telegraf, Markup, Context } from 'telegraf';
+import { Telegraf, Markup, Context, session } from 'telegraf';
 import { createClient } from '@supabase/supabase-js';
 import * as dotenv from 'dotenv';
 import { Database } from './interfaces/db_sheme';
 import { Session } from './interfaces/session';
 
+// Define session context
+interface SessionContext extends Context {
+    session?: {
+        sessionId?: string;
+    };
+}
+
 // Define Question type based on the database schema
 type Question = Database['public']['Tables']['questions']['Row'];
 
-// Store current question for each session ID
-const activeQuestions = new Map<string, Question>();
+// Define types
+type SessionMode = Database['public']['Enums']['session_mode'];
 
 dotenv.config();
 
-const bot = new Telegraf(process.env.BOT_TOKEN!);
+const bot = new Telegraf<SessionContext>(process.env.BOT_TOKEN!);
+bot.use(session());
 
 // Initialize Supabase client
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -99,73 +107,51 @@ async function updateSessionScore(sessionId: string, isCorrect: boolean): Promis
 
 type SessionMode = Database['public']['Enums']['session_mode'];
 
-// Helper function to create or get active session
-async function getOrCreateSession(ctx: Context, mode?: SessionMode): Promise<Session | null> {
+// Helper function to create a new session
+async function createSession(ctx: Context, mode: SessionMode): Promise<string | null> {
     if (!ctx.from) {
         return null;
     }
 
-    // Check for existing active session
-    const { data: existingSession } = await supabase
-        .from('sessions')
-        .select('*')
-        .eq('tg_handle', ctx.from.id.toString())
-        .order('created_date', { ascending: false })
-        .limit(1)
-        .single();
-
-    if (existingSession && existingSession.questions !== null) {
-        // Create new session if the last one has questions (was used)
-        const newSession = {
-            tg_id: ctx.from.id.toString(),
-            tg_handle: ctx.from.username || 'unknown',
-            created_date: new Date().toISOString(),
-            questions: 0,
-            correct: 0,
-            mode: mode || 'mixed'
-        };
-
-        const { data: session, error } = await supabase
-            .from('sessions')
-            .insert([newSession])
-            .select()
-            .single();
-
-        if (error) {
-            console.error('Error creating session:', error);
-            return null;
-        }
-
-        return session;
-    }
-
-    if (existingSession) {
-        return existingSession;
-    }
-
-    // Create new session if none exists
     const newSession = {
         tg_id: ctx.from.id.toString(),
         tg_handle: ctx.from.username || 'unknown',
         created_date: new Date().toISOString(),
         questions: 0,
         correct: 0,
-        mode: mode || 'mixed',
-        
+        mode: mode,
+        max_question: 10 // Default value, could be made configurable
     };
 
     const { data: session, error } = await supabase
         .from('sessions')
         .insert([newSession])
-        .select()
+        .select('id')
         .single();
 
-    if (error) {
+    if (error || !session) {
         console.error('Error creating session:', error);
         return null;
     }
 
+    return session.id;
+}
+
+// Helper function to get session by ID
+async function getSession(sessionId: string): Promise<Session | null> {
+    const { data: session, error } = await supabase
+        .from('sessions')
+        .select('*')
+        .eq('id', sessionId)
+        .single();
+
+    if (error || !session) {
+        console.error('Error getting session:', error);
+        return null;
+    }
+
     return session;
+}
 }
 
 // Helper function to update session progress
@@ -209,68 +195,53 @@ bot.command('start', async (ctx) => {
 
 // Handle answer callbacks
 bot.action(/^answer:(.+)_(\d)$/, async (ctx) => {
-    const session = await getOrCreateSession(ctx);
     const questionId = ctx.match[1];
     const givenAnswerIndex = parseInt(ctx.match[2]);
-
-    console.log('ctx match question id',ctx.match[1])
-    console.log('ctx match given answer',ctx.match[1])
     
+    if (!questionId) {
+        await ctx.reply(`Question error. Can't find the question.`);
+        return;
+    }
+    
+    if (isNaN(givenAnswerIndex)) {
+        await ctx.reply(`Answer error. Invalid answer index.`);
+        return;
+    }
+
+    // Get the current question
+    const question = await getQuestionById(questionId);
+    if (!question || !question.choices) {
+        await ctx.reply('Error retrieving question. Please try /start again.');
+        return;
+    }
+
+    // Get current session from context
+    const sessionId = ctx.session?.sessionId; // You'll need to store this in context when creating session
+    if (!sessionId) {
+        await ctx.reply('Session not found. Please start a new session.');
+        return;
+    }
+
+    const session = await getSession(sessionId);
     if (!session) {
         await ctx.reply('Session error. Please start a new session.');
         return;
     }
-    
-    if (!questionId) {
-        await ctx.reply(`Question error. Can' find the question.`);
-        return;
-    }
-    
-    if (!givenAnswerIndex) {
-        await ctx.reply(`Answer error. You didn't provide an answer.`);
-        return;
-    }
-    let question = await getQuestionById(ctx.match[1])
-    if (!question) {
-    
-            await ctx.reply('Error getting the question. Please try /start again.');
-            return;
-    
-    }
-    
-    if (!question.choices) {
-    
-            await ctx.reply('No possible choices. Please try /start again.');
-            return;
-    
-    }
-    console.log('Active questions:', question.id);
-    console.log('Current session ID:', session.id);
-    console.log('Current question:', question.answer_index, ctx.match[2]);
 
-    const isCorrect = parseInt(ctx.match[2]) === question.answer_index;
-    await updateSessionScore(session.id, isCorrect);
+    const isCorrect = givenAnswerIndex === question.answer_index;
+    await updateSessionScore(sessionId, isCorrect);
     
-    // Get fresh session data
-    const { data: updatedSession } = await supabase
-        .from('sessions')
-        .select('*')
-        .eq('id', session.id)
-        .single();
-
+    // Get updated session data
+    const updatedSession = await getSession(sessionId);
     if (!updatedSession) {
         await ctx.reply('Error retrieving session data. Please try again.');
         return;
     }
 
-    // Send immediate feedback in the popup
+    // Send immediate feedback
     await ctx.answerCbQuery(isCorrect ? '✅ Correct!' : '❌ Wrong!');
-    
-    console.log('Current question:', question);
-    console.log('User answer:', question.choices[givenAnswerIndex]);
-    console.log('Session:', updatedSession);
 
-    // Build the feedback message
+    // Build feedback message
     const messageParts = [
         isCorrect ? '✅ Correct!' : '❌ Wrong!',
         '',
@@ -279,27 +250,21 @@ bot.action(/^answer:(.+)_(\d)$/, async (ctx) => {
         `✨ Correct answer: ${question.answer}`
     ];
 
-    // Add explanation if available
     if (question.answer_info) {
         messageParts.push('', `ℹ️ Explanation: ${question.answer_info}`);
     }
 
-    // Add score
     messageParts.push('', `📊 Score: ${updatedSession.correct}/${updatedSession.questions} correct`);
 
-    // Join all parts with newlines
-    const feedbackMessage = messageParts.join('\n');
-
-    console.log('Feedback message:', feedbackMessage);
-
-    // Get next question ready
+    // Get next question
     const nextQuestion = await getRandomQuestion(session.mode);
-    if (nextQuestion && nextQuestion.choices) {
-        activeQuestions.set(session.id, nextQuestion);
+    if (!nextQuestion || !nextQuestion.choices) {
+        await ctx.reply('Error preparing next question. Please try /start again.');
+        return;
     }
 
     await ctx.reply(
-        feedbackMessage,
+        messageParts.join('\n'),
         Markup.inlineKeyboard([
             [Markup.button.callback('Next Question ⏭️', 'next_command')]
         ])
@@ -464,11 +429,15 @@ bot.action(/^mode:(mixed|dev|user)$/, async (ctx) => {
     const mode = ctx.match[1] as SessionMode;
     await ctx.answerCbQuery(`Starting ${mode} mode...`);
 
-    const session = await getOrCreateSession(ctx, mode);
-    if (!session) {
+    const sessionId = await createSession(ctx, mode);
+    if (!sessionId) {
         await ctx.reply('Sorry, there was an error creating your session. Please try again.');
         return;
     }
+
+    // Store session ID in context
+    if (!ctx.session) ctx.session = {};
+    ctx.session.sessionId = sessionId;
 
     const question = await getRandomQuestion(mode);
     if (!question || !question.choices) {
@@ -476,12 +445,9 @@ bot.action(/^mode:(mixed|dev|user)$/, async (ctx) => {
         return;
     }
 
-    // Store the current question
-    activeQuestions.set(session.id, question);
-
     const modeEmoji = mode === 'mixed' ? '🎲' : mode === 'dev' ? '👩‍💻' : '👤';
     await ctx.reply(
-        `Session started in ${modeEmoji} ${mode} mode!\nSession ID: ${session.id}\n\n❓ ${question.question}`,
+        `Session started in ${modeEmoji} ${mode} mode!\nSession ID: ${sessionId}\n\n❓ ${question.question}`,
         createChoicesKeyboard(question.choices, question.id)
     );
 });
