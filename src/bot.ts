@@ -37,7 +37,7 @@ async function getRandomQuestion(): Promise<Question | null> {
 }
 
 // Helper function to create inline keyboard from choices
-function createChoicesKeyboard(choices: string[]): Markup.Markup<Markup.InlineKeyboardMarkup> {
+function createChoicesKeyboard(choices: string[]) {
     return Markup.inlineKeyboard(
         choices.map(choice => [
             Markup.button.callback(choice, `answer:${choice}`)
