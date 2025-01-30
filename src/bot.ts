@@ -235,26 +235,32 @@ bot.action(/^answer:(.+)$/, async (ctx) => {
     // Send immediate feedback in the popup
     await ctx.answerCbQuery(isCorrect ? '✅ Correct!' : '❌ Wrong!');
     
-    // Prepare detailed feedback message
-    let feedbackMessage = isCorrect ? '✅ Correct!' : '❌ Wrong!';
-    
-    // Add the question for context
-    feedbackMessage += `\n\n📝 Question: ${question.question}`;
-    
-    // Add user's answer
-    feedbackMessage += `\n🤔 Your answer: ${userAnswer}`;
-    
-    // Always show the correct answer
-    feedbackMessage += `\n✨ Correct answer: ${question.answer}`;
-    
+    console.log('Current question:', question);
+    console.log('User answer:', userAnswer);
+    console.log('Session:', updatedSession);
+
+    // Build the feedback message
+    const messageParts = [
+        isCorrect ? '✅ Correct!' : '❌ Wrong!',
+        '',
+        `📝 Question: ${question.question}`,
+        `🤔 Your answer: ${userAnswer}`,
+        `✨ Correct answer: ${question.answer}`
+    ];
+
     // Add explanation if available
     if (question.answer_info) {
-        feedbackMessage += `\n\nℹ️ Explanation: ${question.answer_info}`;
+        messageParts.push('', `ℹ️ Explanation: ${question.answer_info}`);
     }
-    
-    // Add current score
-    const stats = `\n\n📊 Score: ${updatedSession.correct}/${updatedSession.questions} correct`;
-    
+
+    // Add score
+    messageParts.push('', `📊 Score: ${updatedSession.correct}/${updatedSession.questions} correct`);
+
+    // Join all parts with newlines
+    const feedbackMessage = messageParts.join('\n');
+
+    console.log('Feedback message:', feedbackMessage);
+
     // Get next question ready
     const nextQuestion = await getRandomQuestion();
     if (nextQuestion && nextQuestion.choices) {
@@ -262,7 +268,7 @@ bot.action(/^answer:(.+)$/, async (ctx) => {
     }
 
     await ctx.reply(
-        feedbackMessage + stats,
+        feedbackMessage,
         Markup.inlineKeyboard([
             [Markup.button.callback('Next Question ⏭️', 'next_command')]
         ])
