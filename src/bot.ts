@@ -49,7 +49,7 @@ function createChoicesKeyboard(choices: string[]) {
 }
 
 // Helper function to update session score
-async function updateSessionScore(sessionId: string, isCorrect: boolean): Promise<void> {
+async function updateSessionScore(sessionId: string, isCorrect: boolean): Promise<Session | null> {
     const { data: session } = await supabase
         .from('sessions')
         .select('*')
@@ -60,14 +60,19 @@ async function updateSessionScore(sessionId: string, isCorrect: boolean): Promis
         const questions = (session.questions || 0) + 1;
         const correct = (session.correct || 0) + (isCorrect ? 1 : 0);
 
-        await supabase
+        const { data: updatedSession } = await supabase
             .from('sessions')
             .update({ 
                 questions,
                 correct
             })
-            .eq('id', sessionId);
+            .eq('id', sessionId)
+            .select()
+            .single();
+
+        return updatedSession;
     }
+    return null;
 }
 
 // Helper function to create or get active session
@@ -203,14 +208,24 @@ bot.action(/^answer:(.+)$/, async (ctx) => {
     }
 
     const isCorrect = userAnswer === question.answer;
-    await updateSessionScore(session.id, isCorrect);
+    const updatedSession = await updateSessionScore(session.id, isCorrect);
+    
+    if (!updatedSession) {
+        await ctx.reply('Error updating session. Please try again.');
+        return;
+    }
 
     // Send feedback message
     await ctx.answerCbQuery(isCorrect ? '✅ Correct!' : '❌ Wrong!');
+    
+    const feedbackMessage = isCorrect 
+        ? `✅ Correct!\n${question.answer_info ? `\nℹ️ ${question.answer_info}` : ''}`
+        : `❌ Wrong! The correct answer is: ${question.answer}\n${question.answer_info ? `\nℹ️ ${question.answer_info}` : ''}`;
+    
+    const stats = `\n\nScore: ${updatedSession.correct}/${updatedSession.questions} correct`;
+    
     await ctx.reply(
-        isCorrect 
-            ? `✅ Correct!\n${question.answer_info ? `\nℹ️ ${question.answer_info}` : ''}`
-            : `❌ Wrong! The correct answer is: ${question.answer}\n${question.answer_info ? `\nℹ️ ${question.answer_info}` : ''}`,
+        feedbackMessage + stats,
         Markup.inlineKeyboard([
             [Markup.button.callback('Next Question ⏭️', 'next_command')]
         ])
@@ -347,14 +362,14 @@ bot.action('next_command', async (ctx) => {
         return;
     }
 
-    const currentQuestions = session.questions || 0;
-    const currentCorrect = session.correct || 0;
-
     // Store the current question for this session
     sessionQuestions.set(session.id, question);
 
+    const questionNumber = (session.questions || 0) + 1;
+    const stats = `Question ${questionNumber}! 🔄\nScore so far: ${session.correct || 0}/${session.questions || 0} correct`;
+
     await ctx.reply(
-        `Question ${currentQuestions + 1}! 🔄\nCorrect answers so far: ${currentCorrect}\n\n❓ ${question.question}`,
+        `${stats}\n\n❓ ${question.question}`,
         createChoicesKeyboard(question.choices)
     );
 });
