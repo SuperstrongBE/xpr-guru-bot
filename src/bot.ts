@@ -25,14 +25,14 @@ if (!supabaseUrl || !supabaseKey) {
 const supabase = createClient<Database>(supabaseUrl, supabaseKey);
 
 // Helper function to fetch a random question
-async function getRandomQuestion(): Promise<Question | null> {
+async function getRandomQuestion(): Promise<Question | undefined> {
     const { data: questions, error } = await supabase
         .from('questions')
         .select('*');
 
     if (error || !questions || questions.length === 0) {
         console.error('Error fetching questions:', error);
-        return null;
+        return ;
     }
 
     const randomIndex = Math.floor(Math.random() * questions.length);
@@ -424,7 +424,7 @@ bot.action('next_command', async (ctx) => {
 
     await ctx.reply(
         `${stats}\n\n❓ ${question.question}`,
-        createChoicesKeyboard(question.choices)
+        createChoicesKeyboard(question.choices!)
     );
 });
 
