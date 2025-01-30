@@ -7,8 +7,8 @@ import { Session } from './interfaces/session';
 // Define Question type based on the database schema
 type Question = Database['public']['Tables']['questions']['Row'];
 
-// Store current question for each session
-const sessionQuestions = new Map<string, Question>();
+// Store current question for each session ID
+const activeQuestions = new Map<string, Question>();
 
 dotenv.config();
 
@@ -49,7 +49,7 @@ function createChoicesKeyboard(choices: string[]) {
 }
 
 // Helper function to update session score
-async function updateSessionScore(sessionId: string, isCorrect: boolean): Promise<Session | null> {
+async function updateSessionScore(sessionId: string, isCorrect: boolean): Promise<void> {
     const { data: session } = await supabase
         .from('sessions')
         .select('*')
@@ -60,19 +60,14 @@ async function updateSessionScore(sessionId: string, isCorrect: boolean): Promis
         const questions = (session.questions || 0) + 1;
         const correct = (session.correct || 0) + (isCorrect ? 1 : 0);
 
-        const { data: updatedSession } = await supabase
+        await supabase
             .from('sessions')
             .update({ 
                 questions,
                 correct
             })
-            .eq('id', sessionId)
-            .select()
-            .single();
-
-        return updatedSession;
+            .eq('id', sessionId);
     }
-    return null;
 }
 
 // Helper function to create or get active session
@@ -183,8 +178,8 @@ bot.command('start', async (ctx) => {
         return;
     }
 
-    // Store the current question for this session
-    sessionQuestions.set(session.id, question);
+    // Store the current question
+    activeQuestions.set(session.id, question);
 
     await ctx.reply(
         `Welcome to XPR Guru Bot! 🚀\nSession ID: ${session.id}\n\n❓ ${question.question}`,
@@ -201,17 +196,24 @@ bot.action(/^answer:(.+)$/, async (ctx) => {
     }
 
     const userAnswer = ctx.match[1];
-    const question = sessionQuestions.get(session.id);
+    const question = activeQuestions.get(session.id);
     if (!question) {
         await ctx.reply('No active question found. Please start a new question.');
         return;
     }
 
     const isCorrect = userAnswer === question.answer;
-    const updatedSession = await updateSessionScore(session.id, isCorrect);
+    await updateSessionScore(session.id, isCorrect);
     
+    // Get fresh session data
+    const { data: updatedSession } = await supabase
+        .from('sessions')
+        .select('*')
+        .eq('id', session.id)
+        .single();
+
     if (!updatedSession) {
-        await ctx.reply('Error updating session. Please try again.');
+        await ctx.reply('Error retrieving session data. Please try again.');
         return;
     }
 
@@ -232,7 +234,7 @@ bot.action(/^answer:(.+)$/, async (ctx) => {
     );
 
     // Clear the current question after it's answered
-    sessionQuestions.delete(session.id);
+    activeQuestions.delete(session.id);
 });
 
 // Next command
@@ -362,11 +364,23 @@ bot.action('next_command', async (ctx) => {
         return;
     }
 
-    // Store the current question for this session
-    sessionQuestions.set(session.id, question);
+    // Get fresh session data
+    const { data: freshSession } = await supabase
+        .from('sessions')
+        .select('*')
+        .eq('id', session.id)
+        .single();
 
-    const questionNumber = (session.questions || 0) + 1;
-    const stats = `Question ${questionNumber}! 🔄\nScore so far: ${session.correct || 0}/${session.questions || 0} correct`;
+    if (!freshSession) {
+        await ctx.reply('Error retrieving session data. Please try again.');
+        return;
+    }
+
+    // Store the current question
+    activeQuestions.set(session.id, question);
+
+    const questionNumber = (freshSession.questions || 0) + 1;
+    const stats = `Question ${questionNumber}! 🔄\nScore so far: ${freshSession.correct || 0}/${freshSession.questions || 0} correct`;
 
     await ctx.reply(
         `${stats}\n\n❓ ${question.question}`,
