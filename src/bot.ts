@@ -4,6 +4,9 @@ import * as dotenv from 'dotenv';
 import { Database } from './interfaces/db_sheme';
 import { Session } from './interfaces/session';
 
+// Define Question type based on the database schema
+type Question = Database['public']['Tables']['questions']['Row'];
+
 dotenv.config();
 
 const bot = new Telegraf(process.env.BOT_TOKEN!);
@@ -17,6 +20,52 @@ if (!supabaseUrl || !supabaseKey) {
 }
 
 const supabase = createClient<Database>(supabaseUrl, supabaseKey);
+
+// Helper function to fetch a random question
+async function getRandomQuestion(): Promise<Question | null> {
+    const { data: questions, error } = await supabase
+        .from('questions')
+        .select('*');
+
+    if (error || !questions || questions.length === 0) {
+        console.error('Error fetching questions:', error);
+        return null;
+    }
+
+    const randomIndex = Math.floor(Math.random() * questions.length);
+    return questions[randomIndex];
+}
+
+// Helper function to create inline keyboard from choices
+function createChoicesKeyboard(choices: string[]): Markup.Markup<Markup.InlineKeyboardMarkup> {
+    return Markup.inlineKeyboard(
+        choices.map(choice => [
+            Markup.button.callback(choice, `answer:${choice}`)
+        ])
+    );
+}
+
+// Helper function to update session score
+async function updateSessionScore(sessionId: string, isCorrect: boolean): Promise<void> {
+    const { data: session } = await supabase
+        .from('sessions')
+        .select('*')
+        .eq('id', sessionId)
+        .single();
+
+    if (session) {
+        const questions = (session.questions || 0) + 1;
+        const correct = (session.correct || 0) + (isCorrect ? 1 : 0);
+
+        await supabase
+            .from('sessions')
+            .update({ 
+                questions,
+                correct
+            })
+            .eq('id', sessionId);
+    }
+}
 
 // Helper function to create or get active session
 async function getOrCreateSession(ctx: Context): Promise<Session | null> {
@@ -120,9 +169,45 @@ bot.command('start', async (ctx) => {
         return;
     }
 
+    const question = await getRandomQuestion();
+    if (!question || !question.choices) {
+        await ctx.reply('Sorry, there was an error fetching a question. Please try again.');
+        return;
+    }
+
     await ctx.reply(
-        `Welcome to XPR Guru Bot! 🚀\nNew session started (ID: ${session.id})\nUse the buttons below to navigate:`,
-        mainMenuKeyboard
+        `Welcome to XPR Guru Bot! 🚀\nSession ID: ${session.id}\n\n❓ ${question.question}`,
+        createChoicesKeyboard(question.choices)
+    );
+});
+
+// Handle answer callbacks
+bot.action(/^answer:(.+)$/, async (ctx) => {
+    const session = await getOrCreateSession(ctx);
+    if (!session) {
+        await ctx.reply('Session error. Please start a new session.');
+        return;
+    }
+
+    const userAnswer = ctx.match[1];
+    const question = await getRandomQuestion(); // Get the current question
+    if (!question) {
+        await ctx.reply('Error retrieving question. Please try again.');
+        return;
+    }
+
+    const isCorrect = userAnswer === question.answer;
+    await updateSessionScore(session.id, isCorrect);
+
+    // Send feedback message
+    await ctx.answerCbQuery();
+    await ctx.reply(
+        isCorrect 
+            ? `✅ Correct!\n${question.answer_info ? `\nℹ️ ${question.answer_info}` : ''}`
+            : `❌ Wrong! The correct answer is: ${question.answer}\n${question.answer_info ? `\nℹ️ ${question.answer_info}` : ''}`,
+        Markup.inlineKeyboard([
+            [Markup.button.callback('Next Question ⏭️', 'next_command')]
+        ])
     );
 });
 
@@ -247,18 +332,18 @@ bot.action('next_command', async (ctx) => {
         return;
     }
 
+    const question = await getRandomQuestion();
+    if (!question || !question.choices) {
+        await ctx.reply('Sorry, there was an error fetching a question. Please try again.');
+        return;
+    }
+
     const currentQuestions = session.questions || 0;
     const currentCorrect = session.correct || 0;
-    await updateSessionProgress(session.id, currentQuestions + 1, currentCorrect);
 
     await ctx.reply(
-        `Question ${(currentQuestions + 1)}! 🔄\nCorrect answers: ${currentCorrect}`,
-        Markup.inlineKeyboard([
-            [
-                Markup.button.callback('⏭️ Next', 'next_command'),
-                Markup.button.callback('🏁 Finish', 'finish_command')
-            ]
-        ])
+        `Question ${currentQuestions + 1}! 🔄\nCorrect answers so far: ${currentCorrect}\n\n❓ ${question.question}`,
+        createChoicesKeyboard(question.choices)
     );
 });
 
