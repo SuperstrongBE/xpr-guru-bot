@@ -44,6 +44,8 @@ export type Database = {
           correct: number | null
           created_date: string | null
           id: string
+          max_question: number | null
+          mode: Database["public"]["Enums"]["session_mode"]
           questions: number | null
           tg_handle: string
           tg_id: string | null
@@ -52,6 +54,8 @@ export type Database = {
           correct?: number | null
           created_date?: string | null
           id?: string
+          max_question?: number | null
+          mode?: Database["public"]["Enums"]["session_mode"]
           questions?: number | null
           tg_handle: string
           tg_id?: string | null
@@ -60,6 +64,8 @@ export type Database = {
           correct?: number | null
           created_date?: string | null
           id?: string
+          max_question?: number | null
+          mode?: Database["public"]["Enums"]["session_mode"]
           questions?: number | null
           tg_handle?: string
           tg_id?: string | null
@@ -74,7 +80,7 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      session_mode: "mixed" | "dev" | "user"
     }
     CompositeTypes: {
       [_ in never]: never
