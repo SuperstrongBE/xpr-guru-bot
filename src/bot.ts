@@ -28,7 +28,7 @@ async function getOrCreateSession(ctx: Context): Promise<Session | null> {
     const { data: existingSession } = await supabase
         .from('sessions')
         .select('*')
-        .eq('tg_handle', ctx.from.username || 'unknown')
+        .eq('tg_handle', ctx.from.id.toString())
         .order('created_date', { ascending: false })
         .limit(1)
         .single();
@@ -36,6 +36,7 @@ async function getOrCreateSession(ctx: Context): Promise<Session | null> {
     if (existingSession && existingSession.questions !== null) {
         // Create new session if the last one has questions (was used)
         const newSession = {
+            tg_id: ctx.from.id.toString(),
             tg_handle: ctx.from.username || 'unknown',
             created_date: new Date().toISOString(),
             questions: 0,
@@ -62,10 +63,12 @@ async function getOrCreateSession(ctx: Context): Promise<Session | null> {
 
     // Create new session if none exists
     const newSession = {
+        tg_id: ctx.from.id.toString(),
         tg_handle: ctx.from.username || 'unknown',
         created_date: new Date().toISOString(),
         questions: 0,
-        correct: 0
+        correct: 0,
+        
     };
 
     const { data: session, error } = await supabase
@@ -92,7 +95,7 @@ async function updateSessionProgress(sessionId: string, questions: number, corre
         })
         .eq('id', sessionId);
 }
-}
+
 
 // Keyboard markup for main menu
 const mainMenuKeyboard = Markup.keyboard([

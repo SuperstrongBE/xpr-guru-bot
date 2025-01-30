@@ -43,6 +43,7 @@ export type Database = {
           id: string
           questions: number | null
           tg_handle: string
+          tg_id: string | null
         }
         Insert: {
           correct?: number | null
@@ -50,6 +51,7 @@ export type Database = {
           id?: string
           questions?: number | null
           tg_handle: string
+          tg_id?: string | null
         }
         Update: {
           correct?: number | null
@@ -57,6 +59,7 @@ export type Database = {
           id?: string
           questions?: number | null
           tg_handle?: string
+          tg_id?: string | null
         }
         Relationships: []
       }
