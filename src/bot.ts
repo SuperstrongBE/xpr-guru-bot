@@ -39,12 +39,31 @@ async function getRandomQuestion(): Promise<Question | undefined> {
     return questions[randomIndex];
 }
 
+async function getQuestionById(questionId:string): Promise<Question | undefined> {
+    const { data: question, error } = await supabase
+        .from('questions')
+        .select('*')
+        .eq('id', questionId)
+        .limit(1)
+        .single()
+        ;
+
+    if (error || !question) {
+        console.error('Error fetching questions:', error);
+        return ;
+    }
+
+    return question
+}
+
 // Helper function to create inline keyboard from choices
-function createChoicesKeyboard(choices: string[]) {
+function createChoicesKeyboard(choices: string[],questionId:string) {
     return Markup.inlineKeyboard(
-        choices.map(choice => [
-            Markup.button.callback(choice, `answer:${choice}`)
-        ])
+        choices.map((choice, index) => {
+            console.log(`answer:${questionId}_${index}`);
+            return [
+            Markup.button.callback(choice, `answer:${questionId}_${index}`)
+        ]})
     );
 }
 
@@ -56,6 +75,7 @@ async function updateSessionScore(sessionId: string, isCorrect: boolean): Promis
         .eq('id', sessionId)
         .single();
 
+    console.log('update session',session)
     if (session) {
         const questions = (session.questions || 0) + 1;
         const correct = (session.correct || 0) + (isCorrect ? 1 : 0);
@@ -183,41 +203,52 @@ bot.command('start', async (ctx) => {
 
     await ctx.reply(
         `Welcome to XPR Guru Bot! 🚀\nSession ID: ${session.id}\n\n❓ ${question.question}`,
-        createChoicesKeyboard(question.choices)
+        createChoicesKeyboard(question.choices,question.id)
     );
 });
 
 // Handle answer callbacks
-bot.action(/^answer:(.+)$/, async (ctx) => {
+bot.action(/^answer:(.+)_(\d)$/, async (ctx) => {
     const session = await getOrCreateSession(ctx);
+    const questionId = ctx.match[1];
+    const givenAnswerIndex = parseInt(ctx.match[2]);
+
+    console.log('ctx match question id',ctx.match[1])
+    console.log('ctx match given answer',ctx.match[1])
+    
     if (!session) {
         await ctx.reply('Session error. Please start a new session.');
         return;
     }
-
-    const userAnswer = ctx.match[1];
-    const question = activeQuestions.get(session.id);
     
-    console.log('Active questions:', Array.from(activeQuestions.entries()));
-    console.log('Current session ID:', session.id);
-    console.log('Current question:', question);
-
-    if (!question) {
-        const newQuestion = await getRandomQuestion();
-        if (!newQuestion || !newQuestion.choices) {
-            await ctx.reply('Error getting a new question. Please try /start again.');
-            return;
-        }
-        activeQuestions.set(session.id, newQuestion);
-        
-        await ctx.reply(
-            `Here's a new question:\n\n❓ ${newQuestion.question}`,
-            createChoicesKeyboard(newQuestion.choices)
-        );
+    if (!questionId) {
+        await ctx.reply(`Question error. Can' find the question.`);
         return;
     }
+    
+    if (!givenAnswerIndex) {
+        await ctx.reply(`Answer error. You didn't provide an answer.`);
+        return;
+    }
+    let question = await getQuestionById(ctx.match[1])
+    if (!question) {
+    
+            await ctx.reply('Error getting the question. Please try /start again.');
+            return;
+    
+    }
+    
+    if (!question.choices) {
+    
+            await ctx.reply('No possible choices. Please try /start again.');
+            return;
+    
+    }
+    console.log('Active questions:', question.id);
+    console.log('Current session ID:', session.id);
+    console.log('Current question:', question.answer_index, ctx.match[2]);
 
-    const isCorrect = userAnswer === question.answer;
+    const isCorrect = parseInt(ctx.match[2]) === question.answer_index;
     await updateSessionScore(session.id, isCorrect);
     
     // Get fresh session data
@@ -236,7 +267,7 @@ bot.action(/^answer:(.+)$/, async (ctx) => {
     await ctx.answerCbQuery(isCorrect ? '✅ Correct!' : '❌ Wrong!');
     
     console.log('Current question:', question);
-    console.log('User answer:', userAnswer);
+    console.log('User answer:', question.choices[givenAnswerIndex]);
     console.log('Session:', updatedSession);
 
     // Build the feedback message
@@ -244,7 +275,7 @@ bot.action(/^answer:(.+)$/, async (ctx) => {
         isCorrect ? '✅ Correct!' : '❌ Wrong!',
         '',
         `📝 Question: ${question.question}`,
-        `🤔 Your answer: ${userAnswer}`,
+        `🤔 Your answer: ${question.choices[givenAnswerIndex]}`,
         `✨ Correct answer: ${question.answer}`
     ];
 
@@ -424,7 +455,7 @@ bot.action('next_command', async (ctx) => {
 
     await ctx.reply(
         `${stats}\n\n❓ ${question.question}`,
-        createChoicesKeyboard(question.choices!)
+        createChoicesKeyboard(question.choices!,question.id)
     );
 });
 

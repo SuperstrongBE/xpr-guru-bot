@@ -12,6 +12,7 @@ export type Database = {
       questions: {
         Row: {
           answer: string | null
+          answer_index: number | null
           answer_info: string | null
           choices: string[] | null
           id: string
@@ -20,6 +21,7 @@ export type Database = {
         }
         Insert: {
           answer?: string | null
+          answer_index?: number | null
           answer_info?: string | null
           choices?: string[] | null
           id?: string
@@ -28,6 +30,7 @@ export type Database = {
         }
         Update: {
           answer?: string | null
+          answer_index?: number | null
           answer_info?: string | null
           choices?: string[] | null
           id?: string
