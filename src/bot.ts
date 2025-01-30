@@ -197,8 +197,23 @@ bot.action(/^answer:(.+)$/, async (ctx) => {
 
     const userAnswer = ctx.match[1];
     const question = activeQuestions.get(session.id);
+    
+    console.log('Active questions:', Array.from(activeQuestions.entries()));
+    console.log('Current session ID:', session.id);
+    console.log('Current question:', question);
+
     if (!question) {
-        await ctx.reply('No active question found. Please start a new question.');
+        const newQuestion = await getRandomQuestion();
+        if (!newQuestion || !newQuestion.choices) {
+            await ctx.reply('Error getting a new question. Please try /start again.');
+            return;
+        }
+        activeQuestions.set(session.id, newQuestion);
+        
+        await ctx.reply(
+            `Here's a new question:\n\n❓ ${newQuestion.question}`,
+            createChoicesKeyboard(newQuestion.choices)
+        );
         return;
     }
 
@@ -226,15 +241,18 @@ bot.action(/^answer:(.+)$/, async (ctx) => {
     
     const stats = `\n\nScore: ${updatedSession.correct}/${updatedSession.questions} correct`;
     
+    // Get next question ready before clearing current one
+    const nextQuestion = await getRandomQuestion();
+    if (nextQuestion && nextQuestion.choices) {
+        activeQuestions.set(session.id, nextQuestion);
+    }
+
     await ctx.reply(
         feedbackMessage + stats,
         Markup.inlineKeyboard([
             [Markup.button.callback('Next Question ⏭️', 'next_command')]
         ])
     );
-
-    // Clear the current question after it's answered
-    activeQuestions.delete(session.id);
 });
 
 // Next command
@@ -358,12 +376,6 @@ bot.action('next_command', async (ctx) => {
         return;
     }
 
-    const question = await getRandomQuestion();
-    if (!question || !question.choices) {
-        await ctx.reply('Sorry, there was an error fetching a question. Please try again.');
-        return;
-    }
-
     // Get fresh session data
     const { data: freshSession } = await supabase
         .from('sessions')
@@ -376,8 +388,16 @@ bot.action('next_command', async (ctx) => {
         return;
     }
 
-    // Store the current question
-    activeQuestions.set(session.id, question);
+    // Get the prepared question or fetch a new one
+    let question = activeQuestions.get(session.id);
+    if (!question) {
+        question = await getRandomQuestion();
+        if (!question || !question.choices) {
+            await ctx.reply('Sorry, there was an error fetching a question. Please try again.');
+            return;
+        }
+        activeQuestions.set(session.id, question);
+    }
 
     const questionNumber = (freshSession.questions || 0) + 1;
     const stats = `Question ${questionNumber}! 🔄\nScore so far: ${freshSession.correct || 0}/${freshSession.questions || 0} correct`;
