@@ -7,6 +7,9 @@ import { Session } from './interfaces/session';
 // Define Question type based on the database schema
 type Question = Database['public']['Tables']['questions']['Row'];
 
+// Store current question for each session
+const sessionQuestions = new Map<string, Question>();
+
 dotenv.config();
 
 const bot = new Telegraf(process.env.BOT_TOKEN!);
@@ -175,6 +178,9 @@ bot.command('start', async (ctx) => {
         return;
     }
 
+    // Store the current question for this session
+    sessionQuestions.set(session.id, question);
+
     await ctx.reply(
         `Welcome to XPR Guru Bot! 🚀\nSession ID: ${session.id}\n\n❓ ${question.question}`,
         createChoicesKeyboard(question.choices)
@@ -190,9 +196,9 @@ bot.action(/^answer:(.+)$/, async (ctx) => {
     }
 
     const userAnswer = ctx.match[1];
-    const question = await getRandomQuestion(); // Get the current question
+    const question = sessionQuestions.get(session.id);
     if (!question) {
-        await ctx.reply('Error retrieving question. Please try again.');
+        await ctx.reply('No active question found. Please start a new question.');
         return;
     }
 
@@ -200,7 +206,7 @@ bot.action(/^answer:(.+)$/, async (ctx) => {
     await updateSessionScore(session.id, isCorrect);
 
     // Send feedback message
-    await ctx.answerCbQuery();
+    await ctx.answerCbQuery(isCorrect ? '✅ Correct!' : '❌ Wrong!');
     await ctx.reply(
         isCorrect 
             ? `✅ Correct!\n${question.answer_info ? `\nℹ️ ${question.answer_info}` : ''}`
@@ -209,6 +215,9 @@ bot.action(/^answer:(.+)$/, async (ctx) => {
             [Markup.button.callback('Next Question ⏭️', 'next_command')]
         ])
     );
+
+    // Clear the current question after it's answered
+    sessionQuestions.delete(session.id);
 });
 
 // Next command
@@ -340,6 +349,9 @@ bot.action('next_command', async (ctx) => {
 
     const currentQuestions = session.questions || 0;
     const currentCorrect = session.correct || 0;
+
+    // Store the current question for this session
+    sessionQuestions.set(session.id, question);
 
     await ctx.reply(
         `Question ${currentQuestions + 1}! 🔄\nCorrect answers so far: ${currentCorrect}\n\n❓ ${question.question}`,
