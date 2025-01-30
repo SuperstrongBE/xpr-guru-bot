@@ -25,14 +25,21 @@ if (!supabaseUrl || !supabaseKey) {
 const supabase = createClient<Database>(supabaseUrl, supabaseKey);
 
 // Helper function to fetch a random question
-async function getRandomQuestion(): Promise<Question | undefined> {
-    const { data: questions, error } = await supabase
+async function getRandomQuestion(mode: SessionMode): Promise<Question | undefined> {
+    const query = supabase
         .from('questions')
         .select('*');
 
+    // Filter questions based on mode
+    if (mode !== 'mixed') {
+        query.contains('tags', [mode]);
+    }
+
+    const { data: questions, error } = await query;
+
     if (error || !questions || questions.length === 0) {
         console.error('Error fetching questions:', error);
-        return ;
+        return;
     }
 
     const randomIndex = Math.floor(Math.random() * questions.length);
@@ -90,8 +97,10 @@ async function updateSessionScore(sessionId: string, isCorrect: boolean): Promis
     }
 }
 
+type SessionMode = Database['public']['Enums']['session_mode'];
+
 // Helper function to create or get active session
-async function getOrCreateSession(ctx: Context): Promise<Session | null> {
+async function getOrCreateSession(ctx: Context, mode?: SessionMode): Promise<Session | null> {
     if (!ctx.from) {
         return null;
     }
@@ -112,7 +121,8 @@ async function getOrCreateSession(ctx: Context): Promise<Session | null> {
             tg_handle: ctx.from.username || 'unknown',
             created_date: new Date().toISOString(),
             questions: 0,
-            correct: 0
+            correct: 0,
+            mode: mode || 'mixed'
         };
 
         const { data: session, error } = await supabase
@@ -140,6 +150,7 @@ async function getOrCreateSession(ctx: Context): Promise<Session | null> {
         created_date: new Date().toISOString(),
         questions: 0,
         correct: 0,
+        mode: mode || 'mixed',
         
     };
 
@@ -186,24 +197,13 @@ const createInlineKeyboard = () => {
 
 // Start command
 bot.command('start', async (ctx) => {
-    const session = await getOrCreateSession(ctx);
-    if (!session) {
-        await ctx.reply('Sorry, there was an error creating your session. Please try again.');
-        return;
-    }
-
-    const question = await getRandomQuestion();
-    if (!question || !question.choices) {
-        await ctx.reply('Sorry, there was an error fetching a question. Please try again.');
-        return;
-    }
-
-    // Store the current question
-    activeQuestions.set(session.id, question);
-
     await ctx.reply(
-        `Welcome to XPR Guru Bot! 🚀\nSession ID: ${session.id}\n\n❓ ${question.question}`,
-        createChoicesKeyboard(question.choices,question.id)
+        'Welcome to XPR Guru Bot! 🚀\nPlease select your session mode:',
+        Markup.inlineKeyboard([
+            [Markup.button.callback('🎲 Mixed Mode', 'mode:mixed')],
+            [Markup.button.callback('👩‍💻 Developer Mode', 'mode:dev')],
+            [Markup.button.callback('👤 User Mode', 'mode:user')]
+        ])
     );
 });
 
@@ -293,7 +293,7 @@ bot.action(/^answer:(.+)_(\d)$/, async (ctx) => {
     console.log('Feedback message:', feedbackMessage);
 
     // Get next question ready
-    const nextQuestion = await getRandomQuestion();
+    const nextQuestion = await getRandomQuestion(session.mode);
     if (nextQuestion && nextQuestion.choices) {
         activeQuestions.set(session.id, nextQuestion);
     }
@@ -442,7 +442,7 @@ bot.action('next_command', async (ctx) => {
     // Get the prepared question or fetch a new one
     let question = activeQuestions.get(session.id);
     if (!question) {
-        question = await getRandomQuestion();
+        question = await getRandomQuestion(session.mode);
         if (!question || !question.choices) {
             await ctx.reply('Sorry, there was an error fetching a question. Please try again.');
             return;
@@ -456,6 +456,33 @@ bot.action('next_command', async (ctx) => {
     await ctx.reply(
         `${stats}\n\n❓ ${question.question}`,
         createChoicesKeyboard(question.choices!,question.id)
+    );
+});
+
+// Handle mode selection
+bot.action(/^mode:(mixed|dev|user)$/, async (ctx) => {
+    const mode = ctx.match[1] as SessionMode;
+    await ctx.answerCbQuery(`Starting ${mode} mode...`);
+
+    const session = await getOrCreateSession(ctx, mode);
+    if (!session) {
+        await ctx.reply('Sorry, there was an error creating your session. Please try again.');
+        return;
+    }
+
+    const question = await getRandomQuestion(mode);
+    if (!question || !question.choices) {
+        await ctx.reply('Sorry, there was an error fetching a question. Please try again.');
+        return;
+    }
+
+    // Store the current question
+    activeQuestions.set(session.id, question);
+
+    const modeEmoji = mode === 'mixed' ? '🎲' : mode === 'dev' ? '👩‍💻' : '👤';
+    await ctx.reply(
+        `Session started in ${modeEmoji} ${mode} mode!\nSession ID: ${session.id}\n\n❓ ${question.question}`,
+        createChoicesKeyboard(question.choices, question.id)
     );
 });
 
